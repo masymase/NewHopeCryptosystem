@@ -10,6 +10,5 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) == 2:
         if str(sys.argv[1]).lower() == "debug":
-            print("Set debug")
             logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
     main()
