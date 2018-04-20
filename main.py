@@ -204,12 +204,12 @@ def EncodePoly(s):
         t2 = s[(4*i)+2] % NEWHOPE_Q
         t3 = s[(4*i)+3] % NEWHOPE_Q
         r[(7*i)+0] = t0 & int(0xff)
-        r[(7*i)+1] = (t0 >> 8) | ((t1 << 6)%4294967296) #& int(0xff)
-        r[(7*i)+2] = (t1 >> 2) #& int(0xff)
-        r[(7*i)+3] = (t1 >> 10) | ((t2 << 4)%4294967296) #& int(0xff)
-        r[(7*i)+4] = (t2 >> 4) #& int(0xff)
-        r[(7*i)+5] = (t2 >> 12) | ((t3 << 2)%4294967296) #& int(0xff)
-        r[(7*i)+6] = (t3 >> 6) #& int(0xff)
+        r[(7*i)+1] = (t0 >> 8) | ((t1 << 6)%4294967296) & int(0xff)
+        r[(7*i)+2] = (t1 >> 2) & int(0xff)
+        r[(7*i)+3] = (t1 >> 10) | ((t2 << 4)%4294967296) & int(0xff)
+        r[(7*i)+4] = (t2 >> 4) & int(0xff)
+        r[(7*i)+5] = (t2 >> 12) | ((t3 << 2)%4294967296) & int(0xff)
+        r[(7*i)+6] = (t3 >> 6) & int(0xff)
     return r
 
 def EncodePK(b_hat, publicseed):
@@ -217,6 +217,30 @@ def EncodePK(b_hat, publicseed):
     r[0:NEWHOPE_7N_4] = EncodePoly(b_hat)
     r[NEWHOPE_7N_4:] = publicseed
     return r
+
+def EncodeMsg(m):
+    v = [0]*NEWHOPE_N
+    for i in range(0, 32):
+        for j in range(0, 8):
+            mask = -(((m[i]>>j)%256)&1)
+            v[(8*i)+j+0] = (mask&(NEWHOPE_Q//2)) % NEWHOPE_Q
+            v[(8*i)+j+256] = (mask&(NEWHOPE_Q//2)) % NEWHOPE_Q
+            v[(8*i)+j+512] = (mask&(NEWHOPE_Q//2)) % NEWHOPE_Q
+            v[(8*i)+j+768] = (mask&(NEWHOPE_Q//2)) % NEWHOPE_Q
+    return v
+
+def DecodeMsg(v):
+    m = [0]*32
+    for i in range(0, 256):
+        t = abs(((v[i+0])%NEWHOPE_Q) - ((NEWHOPE_Q)//2))
+        print(v[i+0])
+        t = t + abs((((v[i+256])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
+        t = t + abs((((v[i+512])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
+        t = t + abs((((v[i+768])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
+        t = t - NEWHOPE_Q
+        t = t >> 15
+        m[i>>3] = m[i>>3] | ((t<<(i&7))%4294967296) % 256
+    return m
 
 def DecodePoly(v):
     debug('Starting decoding polynomial')
@@ -275,8 +299,21 @@ def PKEGen():
     return pk, sk
 
 def Encrypt(pk, m, coin):
-    # TODO:
-    return 0
+    b_hat, publicseed = DecodePK(pk)
+    a_hat = GenA(publicseed)
+    s_prime = Sample(coin, 0)
+    e_prime = Sample(coin, 1)
+    e_prime_prime = Sample(coin, 2)
+    t_hat = NTT(s_prime)
+    u_hat = Poly_add(Poly_mul(a_hat, t_hat), NTT(e_prime))
+    #print(m)
+    v = EncodeMsg(m)
+    #print(v)
+    mp = DecodeMsg(v)
+    #print(mp)
+
+    c = [0]*NEWHOPE_N
+    return c
 
 
 
@@ -287,8 +324,10 @@ def main():
 
     pk, sk = PKEGen()
     coin = os.urandom(32)
-    b2, seed2 = DecodePK(pk)
-    #c = Encrypt(pk, m, coin)
+    m = [6]
+    zeros = [0]*(32-len(m))
+    m = zeros+m
+    c = Encrypt(pk, m, coin)
 
 
 if __name__ == "__main__":
