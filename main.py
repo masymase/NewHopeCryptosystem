@@ -146,6 +146,12 @@ def Poly_add(a, b):
         c[i] = (a[i]+b[i]) % NEWHOPE_Q
     return c
 
+def PolySubtract(a, b):
+    c = [0]*NEWHOPE_N
+    for i in range(0, NEWHOPE_N):
+        c[i] = (a[i]-b[i]) % NEWHOPE_Q
+    return c
+
 # Implementation from Patrick Longa and Michael Naehrig
 # - Algorithm 1: NTT
 # Title: "Speeding up the Number Theoretic Transform for Faster Ideal Lattice-Based Cryptography"
@@ -197,6 +203,12 @@ def INTT(a):
         a[j] = (a[j]*NEWHOPE_N_INV) % NEWHOPE_Q
     return a
 
+def EncodeC(u, h):
+    c = [0]*(NEWHOPE_7N_4 + NEWHOPE_3N_8)
+    c[0:NEWHOPE_7N_4] = EncodePoly(u)
+    c[NEWHOPE_7N_4:] = h
+    return c
+
 def EncodePoly(s):
     r = [0]*NEWHOPE_7N_4
     for i in range(0, 256):
@@ -230,17 +242,10 @@ def EncodeMsg(m):
             v[(8*i)+j+768] = (mask&(NEWHOPE_Q//2)) #% NEWHOPE_Q
     return v
 
-def DecodeMsg(v):
-    m = [0]*32
-    for i in range(0, 256):
-        t = abs(((v[i+0])%NEWHOPE_Q) - ((NEWHOPE_Q)//2))
-        t = t + abs((((v[i+256])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
-        t = t + abs((((v[i+512])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
-        t = t + abs((((v[i+768])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
-        t = t - NEWHOPE_Q
-        t = t >> 15
-        m[i>>3] = m[i>>3] | -((t<<(i&7)))
-    return m
+def DecodeC(c):
+    u = DecodePoly(c[0:NEWHOPE_7N_4])
+    h = c[NEWHOPE_7N_4:]
+    return u, h
 
 def DecodePoly(v):
     debug('Starting decoding polynomial')
@@ -252,6 +257,18 @@ def DecodePoly(v):
         r[(4*i)+3] = (int(v[(7*i)+5]) >> 2) | ((int(v[(7*i)+6]) << 6)%4294967296)
     debug('Done decoding polynomial')
     return r
+
+def DecodeMsg(v):
+    m = [0]*32
+    for i in range(0, 256):
+        t = abs(((v[i+0])%NEWHOPE_Q) - ((NEWHOPE_Q)//2))
+        t = t + abs((((v[i+256])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
+        t = t + abs((((v[i+512])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
+        t = t + abs((((v[i+768])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
+        t = t - NEWHOPE_Q
+        t = t >> 15
+        m[i>>3] = m[i>>3] | -((t<<(i&7)))
+    return m
 
 def DecodePK(pk):
     debug('Starting decoding public key')
@@ -306,10 +323,10 @@ def Compress(v):
         i = 8*l
         for j in range(0, 8):
             t[j] = v[i+j] % NEWHOPE_Q
-            t[j] = (((int(t[j]<<3)%4294967296)+NEWHOPE_Q//2)//NEWHOPE_Q) & int(0x7)
-        h[k+0] = (t[0] | ((t[1]<<3)%4294967296) | ((t[2]<<6)%4294967296)) % 256
-        h[k+1] = ((t[2]>>2) | ((t[3]<<1)%4294967296) | ((t[4]<<4)%4294967296) | ((t[5]<<7)%4294967296)) % 256
-        h[k+2] = ((t[5]>>1) | ((t[6]<<2)%4294967296) | ((t[7]<<5)%4294967296)) % 256
+            t[j] = (((int(t[j]<<3))+NEWHOPE_Q//2)//NEWHOPE_Q) & int(0x7)
+        h[k+0] = t[0] | ((t[1]<<3)%256) | ((t[2]<<6)%256)
+        h[k+1] = (t[2]>>2) | ((t[3]<<1)%256) | ((t[4]<<4)%256) | ((t[5]<<7)%256)
+        h[k+2] = (t[5]>>1) | ((t[6]<<2)%256) | ((t[7]<<5)%256)
         k += 3
     return h
 
@@ -320,15 +337,15 @@ def Decompress(h):
         i = 8*l
         r[i+0] = h[k+0] & 7
         r[i+1] = (h[k+0]>>3) & 7
-        r[i+2] = (h[k+0]>>6) | (((h[1]<<2)%4294967296)&4)
+        r[i+2] = (h[k+0]>>6) | (((h[1]<<2))&4)
         r[i+3] = (h[k+1]>>1) & 7
         r[i+4] = (h[k+1]>>4) & 7
-        r[i+5] = (h[k+1]>>7) | (((h[2]<<1)%4294967296)&6)
+        r[i+5] = (h[k+1]>>7) | (((h[2]<<1))&6)
         r[i+6] = (h[k+2]>>2) & 7
         r[i+7] = (h[k+2]>>5)
         k += 3
         for j in range(0, 8):
-            r[i+j] = ((r[i+j]*NEWHOPE_Q)+4)>>3
+            r[i+j] = (((r[i+j])*NEWHOPE_Q)+4)>>3
     return r
 
 def Encrypt(pk, m, coin):
@@ -344,13 +361,17 @@ def Encrypt(pk, m, coin):
     sum1 = Poly_add(ntt_temp, e_prime_prime)
     v_prime = Poly_add(sum1, v)
     h = Compress(v_prime)
-    v_prime_prime = Decompress(h)
-    print(v_prime)
-    print(v_prime_prime)
-
-    c = [0]*NEWHOPE_N
+    c = EncodeC(u_hat, h)
     return c
 
+def Decrypt(c, sk):
+    u_hat, h = DecodeC(c)
+    s_hat = DecodePoly(sk)
+    v_prime = Decompress(h)
+    us_product = INTT(Poly_mul(u_hat, s_hat))
+    v_sub = PolySubtract(v_prime, us_product)
+    m = DecodeMsg(v_sub)
+    return m
 
 
 def main():
@@ -364,6 +385,9 @@ def main():
     zeros = [0]*(32-len(m))
     m = zeros+m
     c = Encrypt(pk, m, coin)
+    m_prime = Decrypt(c, sk)
+    #assert m, m_prime "DECRYPTION FAILED."
+
 
 
 if __name__ == "__main__":
