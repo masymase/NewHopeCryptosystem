@@ -7,6 +7,7 @@ from logging import debug, warning, info
 NEWHOPE_N = 1024      # Security level of 233 (sect. 1.3)
 NEWHOPE_N_INV = 12277
 NEWHOPE_7N_4 = 1792
+NEWHOPE_3N_8 = 384
 NEWHOPE_Q = 12289     # Smallest prime st. q = 1 (mod 2n) so that NTT can be realized efficiently (sect. 1.3)
 NEWHOPE_K  =8         # Distribution of RLWE secret using centered binomial distribution of parameter k=8 (sect. 1.3)
 SQUEEZE_BLOCK_SIZE = 168
@@ -223,23 +224,22 @@ def EncodeMsg(m):
     for i in range(0, 32):
         for j in range(0, 8):
             mask = -(((m[i]>>j)%256)&1)
-            v[(8*i)+j+0] = (mask&(NEWHOPE_Q//2)) % NEWHOPE_Q
-            v[(8*i)+j+256] = (mask&(NEWHOPE_Q//2)) % NEWHOPE_Q
-            v[(8*i)+j+512] = (mask&(NEWHOPE_Q//2)) % NEWHOPE_Q
-            v[(8*i)+j+768] = (mask&(NEWHOPE_Q//2)) % NEWHOPE_Q
+            v[(8*i)+j+0] = (mask&(NEWHOPE_Q//2)) #% NEWHOPE_Q
+            v[(8*i)+j+256] = (mask&(NEWHOPE_Q//2)) #% NEWHOPE_Q
+            v[(8*i)+j+512] = (mask&(NEWHOPE_Q//2)) #% NEWHOPE_Q
+            v[(8*i)+j+768] = (mask&(NEWHOPE_Q//2)) #% NEWHOPE_Q
     return v
 
 def DecodeMsg(v):
     m = [0]*32
     for i in range(0, 256):
         t = abs(((v[i+0])%NEWHOPE_Q) - ((NEWHOPE_Q)//2))
-        print(v[i+0])
         t = t + abs((((v[i+256])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
         t = t + abs((((v[i+512])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
         t = t + abs((((v[i+768])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
         t = t - NEWHOPE_Q
         t = t >> 15
-        m[i>>3] = m[i>>3] | ((t<<(i&7))%4294967296) % 256
+        m[i>>3] = m[i>>3] | -((t<<(i&7)))
     return m
 
 def DecodePoly(v):
@@ -298,6 +298,39 @@ def PKEGen():
 
     return pk, sk
 
+def Compress(v):
+    k = 0
+    t = [0]*8
+    h = [0]*NEWHOPE_3N_8
+    for l in range(0, 128):
+        i = 8*l
+        for j in range(0, 8):
+            t[j] = v[i+j] % NEWHOPE_Q
+            t[j] = (((int(t[j]<<3)%4294967296)+NEWHOPE_Q//2)//NEWHOPE_Q) & int(0x7)
+        h[k+0] = (t[0] | ((t[1]<<3)%4294967296) | ((t[2]<<6)%4294967296)) % 256
+        h[k+1] = ((t[2]>>2) | ((t[3]<<1)%4294967296) | ((t[4]<<4)%4294967296) | ((t[5]<<7)%4294967296)) % 256
+        h[k+2] = ((t[5]>>1) | ((t[6]<<2)%4294967296) | ((t[7]<<5)%4294967296)) % 256
+        k += 3
+    return h
+
+def Decompress(h):
+    r = [0]*NEWHOPE_N
+    k = 0
+    for l in range(0, 128):
+        i = 8*l
+        r[i+0] = h[k+0] & 7
+        r[i+1] = (h[k+0]>>3) & 7
+        r[i+2] = (h[k+0]>>6) | (((h[1]<<2)%4294967296)&4)
+        r[i+3] = (h[k+1]>>1) & 7
+        r[i+4] = (h[k+1]>>4) & 7
+        r[i+5] = (h[k+1]>>7) | (((h[2]<<1)%4294967296)&6)
+        r[i+6] = (h[k+2]>>2) & 7
+        r[i+7] = (h[k+2]>>5)
+        k += 3
+        for j in range(0, 8):
+            r[i+j] = ((r[i+j]*NEWHOPE_Q)+4)>>3
+    return r
+
 def Encrypt(pk, m, coin):
     b_hat, publicseed = DecodePK(pk)
     a_hat = GenA(publicseed)
@@ -306,11 +339,14 @@ def Encrypt(pk, m, coin):
     e_prime_prime = Sample(coin, 2)
     t_hat = NTT(s_prime)
     u_hat = Poly_add(Poly_mul(a_hat, t_hat), NTT(e_prime))
-    #print(m)
     v = EncodeMsg(m)
-    #print(v)
-    mp = DecodeMsg(v)
-    #print(mp)
+    ntt_temp = INTT(Poly_mul(b_hat, t_hat))
+    sum1 = Poly_add(ntt_temp, e_prime_prime)
+    v_prime = Poly_add(sum1, v)
+    h = Compress(v_prime)
+    v_prime_prime = Decompress(h)
+    print(v_prime)
+    print(v_prime_prime)
 
     c = [0]*NEWHOPE_N
     return c
@@ -324,7 +360,7 @@ def main():
 
     pk, sk = PKEGen()
     coin = os.urandom(32)
-    m = [6]
+    m = [5, 6, 233, 54, 12, 13, 14, 15, 16, 167]
     zeros = [0]*(32-len(m))
     m = zeros+m
     c = Encrypt(pk, m, coin)
