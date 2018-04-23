@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import hashlib
+import random
 from logging import debug, warning, info
 
 NEWHOPE_N = 1024      # Security level of 233 (sect. 1.3)
@@ -10,6 +11,7 @@ NEWHOPE_7N_4 = 1792
 NEWHOPE_3N_8 = 384
 NEWHOPE_Q = 12289     # Smallest prime st. q = 1 (mod 2n) so that NTT can be realized efficiently (sect. 1.3)
 NEWHOPE_K  =8         # Distribution of RLWE secret using centered binomial distribution of parameter k=8 (sect. 1.3)
+NEWHOPE_ROOT = 10302
 SQUEEZE_BLOCK_SIZE = 168
 psi_bitrev = [8193, 493, 6845, 9908, 1378, 10377, 7952, 435, 10146, 1065, 404, 7644, 1207, 3248, 11121, 5277, 2437, 3646, 2987, 6022, 9867, 6250, 10102, 9723, 1002, 7278, 4284, 7201,
     875, 3780, 1607, 4976, 8146, 4714, 242, 1537, 3704, 9611, 5019, 545, 5084, 10657, 4885, 11272, 3066, 12262, 3763, 10849, 2912, 5698, 11935, 4861, 7277, 9808, 11244, 2859,
@@ -152,56 +154,98 @@ def PolySubtract(a, b):
         c[i] = (a[i]-b[i]) % NEWHOPE_Q
     return c
 
-# Implementation from Patrick Longa and Michael Naehrig
-# - Algorithm 1: NTT
-# Title: "Speeding up the Number Theoretic Transform for Faster Ideal Lattice-Based Cryptography"
-# URL: "https://eprint.iacr.org/2016/504.pdf"
-def NTT(a):
+# # Implementation from Patrick Longa and Michael Naehrig
+# # - Algorithm 1: NTT
+# # Title: "Speeding up the Number Theoretic Transform for Faster Ideal Lattice-Based Cryptography"
+# # URL: "https://eprint.iacr.org/2016/504.pdf"
+# def NTT(a):
+#
+#     debug("Starting NTT")
+#     t = NEWHOPE_N
+#     m = 1
+#
+#     debug("Beginning while-loop in NTT")
+#     while(m < NEWHOPE_N):
+#         t = t//2
+#         for i in range(0, m):
+#             j1 = 2*i*t
+#             j2 = j1 + t - 1
+#             s = psi_bitrev[m+i]
+#             for j in range(j1, j2+1):
+#                 u = a[j]
+#                 v = a[j+t]*s
+#                 a[j] = (u+v) % NEWHOPE_Q
+#                 a[j+t] = (u-v) % NEWHOPE_Q
+#         m = 2*m
+#     debug("End of while-loop in NTT")
+#     return a
+#
+# # Implementation from Patrick Longa and Michael Naehrig
+# # - Algorithm 2: INTT
+# # Title: "Speeding up the Number Theoretic Transform for Faster Ideal Lattice-Based Cryptography"
+# # URL: "https://eprint.iacr.org/2016/504.pdf"
+# def INTT(a):
+#     t = 1
+#     m = NEWHOPE_N
+#     while (m > 1):
+#         j1 = 0
+#         h = m//2
+#         for i in range(0, h):
+#             j2 = j1 + t - 1
+#             s = psi_bitrev_inv[h+1]
+#             for j in range(j1, j2+1):
+#                 u = a[j]
+#                 v = a[j+1]
+#                 a[j] = (u+v) % NEWHOPE_Q
+#                 a[j+t] = (u-v)*s % NEWHOPE_Q
+#             j1 = j1 + (2*t)
+#         t = 2*t
+#         m = m//2
+#     for j in range(0, NEWHOPE_N):
+#         a[j] = (a[j]*NEWHOPE_N_INV) % NEWHOPE_Q
+#     return a
 
-    debug("Starting NTT")
-    t = NEWHOPE_N
-    m = 1
+# Returns the forward number-theoretic transform of the given vector with
+# respect to the given primitive nth root of unity under the given modulus.
+def NTT(invec, root, mod):
+	if len(invec) >= mod:
+		raise ValueError()
+	if not all((0 <= val < mod) for val in invec):
+		raise ValueError()
+	if not (1 <= root < mod):
+		raise ValueError()
 
-    debug("Beginning while-loop in NTT")
-    while(m < NEWHOPE_N):
-        t = t//2
-        for i in range(0, m):
-            j1 = 2*i*t
-            j2 = j1 + t - 1
-            s = psi_bitrev[m+i]
-            for j in range(j1, j2+1):
-                u = a[j]
-                v = a[j+t]*s
-                a[j] = (u+v) % NEWHOPE_Q
-                a[j+t] = (u-v) % NEWHOPE_Q
-        m = 2*m
-    debug("End of while-loop in NTT")
-    return a
+	outvec = []
+	for i in range(len(invec)):
+		temp = 0
+		for (j, val) in enumerate(invec):
+			temp += val * pow(root, i * j, mod)
+			temp %= mod
+		outvec.append(temp)
+	return outvec
 
-# Implementation from Patrick Longa and Michael Naehrig
-# - Algorithm 2: INTT
-# Title: "Speeding up the Number Theoretic Transform for Faster Ideal Lattice-Based Cryptography"
-# URL: "https://eprint.iacr.org/2016/504.pdf"
-def INTT(a):
-    t = 1
-    m = NEWHOPE_N
-    while (m > 1):
-        j1 = 0
-        h = m//2
-        for i in range(0, h):
-            j2 = j1 + t - 1
-            s = psi_bitrev_inv[h+1]
-            for j in range(j1, j2+1):
-                u = a[j]
-                v = a[j+1]
-                a[j] = (u+v) % NEWHOPE_Q
-                a[j+t] = (u-v)*s % NEWHOPE_Q
-            j1 = j1 + (2*t)
-        t = 2*t
-        m = m//2
-    for j in range(0, NEWHOPE_N):
-        a[j] = (a[j]*NEWHOPE_N_INV) % NEWHOPE_Q
-    return a
+
+# Returns the inverse number-theoretic transform of the given vector with
+# respect to the given primitive nth root of unity under the given modulus.
+def INTT(invec, root, mod):
+	outvec = NTT(invec, reciprocal(root, mod), mod)
+	scaler = reciprocal(len(invec), mod)
+	return [(val * scaler % mod) for val in outvec]
+
+# Returns the multiplicative inverse of n modulo mod. The inverse x has the property that
+# 0 <= x < mod and (x * n) % mod = 1. The inverse exists if and only if gcd(n, mod) = 1.
+def reciprocal(n, mod):
+	if not (0 <= n < mod):
+		raise ValueError()
+	x, y = mod, n
+	a, b = 0, 1
+	while y != 0:
+		a, b = b, a - x // y * b
+		x, y = y, x % y
+	if x == 1:
+		return a % mod
+	else:
+		raise ValueError("Reciprocal does not exist")
 
 def EncodeC(u, h):
     c = [0]*(NEWHOPE_7N_4 + NEWHOPE_3N_8)
@@ -267,7 +311,7 @@ def DecodeMsg(v):
         t = t + abs((((v[i+768])%NEWHOPE_Q) - ((NEWHOPE_Q)//2)))
         t = t - NEWHOPE_Q
         t = t >> 15
-        m[i>>3] = m[i>>3] | -((t<<(i&7)))
+        m[i>>3] = m[i>>3] | -(t<<(i&7))
     return m
 
 def DecodePK(pk):
@@ -276,44 +320,6 @@ def DecodePK(pk):
     seed = pk[NEWHOPE_7N_4:]
     debug('Done decoding public key')
     return b_hat, seed
-
-def PKEGen():
-
-    debug("Generating the 32-byte random seed")
-    seed = os.urandom(32)
-
-    debug("Creating publicseed and noiseseed")
-    z = hashlib.shake_256(seed).digest(64)
-    publicseed = z[0:32]
-    noiseseed = z[32:64]
-
-    debug("Generating polynomial a_hat")
-    a_hat = GenA(publicseed)
-
-    debug("Sampling polynomial s")
-    s = Sample(noiseseed, 0)
-
-    debug("Computing s_hat = NTT of s")
-    s_hat = NTT(s)
-
-    debug("Sampling polynomial e")
-    e = Sample(noiseseed, 1)
-
-    debug("Computing e_hat = NTT of e")
-    e_hat = NTT(e)
-
-    debug("Computing b_hat = a_hat dot s_hat + e_hat")
-    b_hat = Poly_add((Poly_mul(a_hat, s_hat)), e_hat)
-
-    debug("Computing public key pk")
-    pk = EncodePK(b_hat, publicseed)
-
-    debug("Computing secret key sk")
-    sk = EncodePoly(s_hat)
-
-    debug("Public key generation complete. Returning keys")
-
-    return pk, sk
 
 def Compress(v):
     k = 0
@@ -324,15 +330,21 @@ def Compress(v):
         for j in range(0, 8):
             t[j] = v[i+j] % NEWHOPE_Q
             t[j] = (((int(t[j]<<3))+NEWHOPE_Q//2)//NEWHOPE_Q) & int(0x7)
-        h[k+0] = t[0] | ((t[1]<<3)%256) | ((t[2]<<6)%256)
-        h[k+1] = (t[2]>>2) | ((t[3]<<1)%256) | ((t[4]<<4)%256) | ((t[5]<<7)%256)
-        h[k+2] = (t[5]>>1) | ((t[6]<<2)%256) | ((t[7]<<5)%256)
+        h[k+0] = (t[0] | ((t[1]<<3)) | ((t[2]<<6))) %256
+        h[k+1] = ((t[2]>>2) | ((t[3]<<1)) | ((t[4]<<4)) | ((t[5]<<7))) %256
+        h[k+2] = ((t[5]>>1) | ((t[6]<<2)) | ((t[7]<<5))) %256
+        # print("============================compress================================")
+        # print(h)
+        # print("============================compress================================")
         k += 3
     return h
 
 def Decompress(h):
     r = [0]*NEWHOPE_N
     k = 0
+    # print("============================input================================")
+    # print(h)
+    # print("============================input================================")
     for l in range(0, 128):
         i = 8*l
         r[i+0] = h[k+0] & 7
@@ -344,22 +356,76 @@ def Decompress(h):
         r[i+6] = (h[k+2]>>2) & 7
         r[i+7] = (h[k+2]>>5)
         k += 3
+        # print("============================decompress================================")
+        # print(r)
+        # print("============================decompress================================")
         for j in range(0, 8):
             r[i+j] = (((r[i+j])*NEWHOPE_Q)+4)>>3
     return r
 
+def PKEGen():
+
+    debug("Generating the 32-byte random seed")
+    seed = os.urandom(32)
+
+    debug("Creating publicseed and noiseseed")
+    z = hashlib.shake_256(seed).digest(64)
+    publicseed = z[0:32]
+    noiseseed = z[32:]
+
+    debug("Generating polynomial a_hat")
+    a_hat = GenA(publicseed)
+
+    debug("Sampling polynomial s")
+    s = Sample(noiseseed, 0)
+
+    debug("Computing s_hat = NTT of s")
+    s_hat = NTT(s, NEWHOPE_ROOT, NEWHOPE_Q)
+
+    debug("Sampling polynomial e")
+    e = Sample(noiseseed, 1)
+
+    debug("Computing e_hat = NTT of e")
+    e_hat = NTT(e, NEWHOPE_ROOT, NEWHOPE_Q)
+
+    debug("Computing ahat_shat")
+    ahat_shat = Poly_mul(a_hat, s_hat)
+
+    debug("Computing b_hat = a_hat dot s_hat + e_hat")
+    b_hat = Poly_add(ahat_shat, e_hat)
+
+    debug("Computing public key pk")
+    pk = EncodePK(b_hat, publicseed)
+
+    debug("Computing secret key sk")
+    sk = EncodePoly(s_hat)
+
+    debug("Public key generation complete. Returning keys")
+
+    return pk, sk
+
 def Encrypt(pk, m, coin):
     b_hat, publicseed = DecodePK(pk)
     a_hat = GenA(publicseed)
+
     s_prime = Sample(coin, 0)
     e_prime = Sample(coin, 1)
     e_prime_prime = Sample(coin, 2)
-    t_hat = NTT(s_prime)
-    u_hat = Poly_add(Poly_mul(a_hat, t_hat), NTT(e_prime))
+
+    t_hat = NTT(s_prime, NEWHOPE_ROOT, NEWHOPE_Q)
+    e_prime_ntt = NTT(e_prime, NEWHOPE_ROOT, NEWHOPE_Q)
+
+    ahat_that = Poly_mul(a_hat, t_hat)
+    u_hat = Poly_add(ahat_that, e_prime_ntt)
+
     v = EncodeMsg(m)
-    ntt_temp = INTT(Poly_mul(b_hat, t_hat))
+
+    bhat_that = Poly_mul(b_hat, t_hat)
+    ntt_temp = INTT(bhat_that, NEWHOPE_ROOT, NEWHOPE_Q)
+
     sum1 = Poly_add(ntt_temp, e_prime_prime)
     v_prime = Poly_add(sum1, v)
+    print(v)
     h = Compress(v_prime)
     c = EncodeC(u_hat, h)
     return c
@@ -368,11 +434,13 @@ def Decrypt(c, sk):
     u_hat, h = DecodeC(c)
     s_hat = DecodePoly(sk)
     v_prime = Decompress(h)
-    us_product = INTT(Poly_mul(u_hat, s_hat))
-    v_sub = PolySubtract(v_prime, us_product)
+
+    us_product = Poly_mul(u_hat, s_hat)
+    inv_product = INTT(us_product, NEWHOPE_ROOT, NEWHOPE_Q)
+    v_sub = PolySubtract(v_prime, inv_product)
+    print(v_sub)
     m = DecodeMsg(v_sub)
     return m
-
 
 def main():
     print("=============================================================================")
@@ -381,13 +449,11 @@ def main():
 
     pk, sk = PKEGen()
     coin = os.urandom(32)
-    m = [5, 6, 233, 54, 12, 13, 14, 15, 16, 167]
-    zeros = [0]*(32-len(m))
-    m = zeros+m
+    m = [225, 235, 49, 214, 170, 104, 167, 11, 44, 191, 245, 93, 225, 169, 110, 109, 210, 245, 50, 76, 61, 222, 120, 169, 152, 103, 251, 147, 188, 248, 161, 144]
     c = Encrypt(pk, m, coin)
     m_prime = Decrypt(c, sk)
-    #assert m, m_prime "DECRYPTION FAILED."
-
+    print(m)
+    print(m_prime)
 
 
 if __name__ == "__main__":
